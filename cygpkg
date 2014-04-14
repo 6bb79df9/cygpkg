@@ -1,0 +1,75 @@
+#!/usr/bin/env perl
+# vim:ft=perl
+
+use strict;
+use warnings;
+use Carp;
+
+use Data::Dumper;
+
+my %pkg_ref_cnt = ();
+my %pkg_requires = ();
+my %pkg_required = ();
+my $pkg_name = undef;
+
+# Parse setup.ini file
+while (<STDIN>) {
+  chomp;
+
+  # Ignore comment lines
+  /^\s*#/ and next;
+
+  if (!defined($pkg_name)) {
+    if (/^\s*@\s+(?<pkg_name>[^\s]+).*$/) {
+      # Package definition starts at @<package_name>
+      $pkg_name = $+{pkg_name};
+      defined($pkg_ref_cnt{$pkg_name})
+        or $pkg_ref_cnt{$pkg_name} = 0;
+    }
+  } else {
+    if (/^\s*$/
+      || /^\s*\[prev\]/) {
+      # Package definition ends at:
+      # 1. A blank line
+      # 2. A line starts at '[prev]'
+      $pkg_name = undef;
+    } elsif (/^\s*category: Base\s*$/
+      || /^\s*category: Base Utils\s*$/
+      || /^\s*category: Base Doc\s*$/) {
+      # Packages in Base category will always be installed, so they are
+      # "already" refered from a special package ____BASE____
+      push @{$pkg_requires{'____BASE____'}}, $pkg_name;
+      push @{$pkg_required{$pkg_name}}, '____BASE____';
+    } elsif (/^\s*requires:\s*(?<dependencies>.*)$/) {
+      # Normal package depencencies
+      for (split /\s+/, $+{dependencies}) {
+        $pkg_ref_cnt{$_}++;
+        push @{$pkg_requires{$pkg_name}}, $_;
+        push @{$pkg_required{$_}}, $pkg_name;
+      }
+    }
+  }
+}
+
+# Get currently installed packages
+my @pkgs = split /\s+/, `cygcheck -cd`;
+for (1..5) {
+  shift @pkgs;
+}
+my %pkg_installed = @pkgs;
+my %pkg_install_ref_cnt = ();
+for my $pkg_name (('____BASE____', keys %pkg_installed)) {
+  defined($pkg_install_ref_cnt{$pkg_name})
+    or $pkg_install_ref_cnt{$pkg_name} = 0;
+  for (@{$pkg_requires{$pkg_name}}) {
+    $pkg_install_ref_cnt{$_}++;
+  }
+}
+
+# List top packages which has not been refered by other packages
+for my $pkg_name (sort keys %pkg_install_ref_cnt) {
+  my $ref_cnt = $pkg_install_ref_cnt{$pkg_name};
+  if ($ref_cnt == 0 && $pkg_name ne '____BASE____') {
+    print "$pkg_name\n";
+  }
+}
